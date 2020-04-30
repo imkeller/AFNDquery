@@ -1,0 +1,16 @@
+Package: AFNDquery
+Type: Package
+Title: Query allele frequencies from the Allele Frequency Net Database
+Version: 0.0.1
+Authors@R: c(
+    person("Katharina", "Imkeller", email = "k.imkeller@dkfz.de", role = c("cre", "aut")))
+Description: This package can be used to query allele frequencies and population metadata from the Allele Frequency Net Database.
+License: GPL-3
+Encoding: UTF-8
+LazyData: false
+Depends: R (>= 3.6)
+Imports: rvest, stringr
+Suggests: knitr, testthat
+VignetteBuilder: knitr
+RoxygenNote: 7.1.0
+biocViews: Software
