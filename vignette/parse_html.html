@@ -458,13 +458,13 @@ color: #d14;
   function tryEval(code) {
     var result = null;
     try {
-      result = eval(code);
+      result = eval("(" + code + ")");
     } catch(error) {
       if (!error instanceof SyntaxError) {
         throw error;
       }
       try {
-        result = eval("(" + code + ")");
+        result = eval(code);
       } catch(e) {
         if (e instanceof SyntaxError) {
           throw error;
@@ -1264,7 +1264,7 @@ HTMLWidgets.widget({
     //  (b) Never want to fill the container (we want the pagination
     //      level to determine the size of the container)
     if (window.FlexDashboard && !window.FlexDashboard.isFillPage()) {
-      data.options.bPaginate = true;
+      data.options.paging = true;
       data.fillContainer = false;
     }
 
@@ -1290,7 +1290,7 @@ HTMLWidgets.widget({
     if (data.caption) $table.prepend(data.caption);
 
     if (!data.selection) data.selection = {
-      mode: 'none', selected: null, target: 'row'
+      mode: 'none', selected: null, target: 'row', selectable: null
     };
     if (HTMLWidgets.shinyMode && data.selection.mode !== 'none' &&
         data.selection.target === 'row+column') {
@@ -1331,7 +1331,7 @@ HTMLWidgets.widget({
 
       // if we aren't paginating then move around the info/filter controls
       // to save space at the bottom and rephrase the info callback
-      if (data.options.bPaginate === false) {
+      if (data.options.paging === false) {
 
         // we know how to do this cleanly for bootstrap, not so much
         // for other themes/layouts
@@ -1348,17 +1348,20 @@ HTMLWidgets.widget({
     }
 
     // auto hide navigation if requested
-    if (data.autoHideNavigation === true) {
-      if (bootstrapActive && data.options.bPaginate !== false) {
-        // strip all nav if length >= cells
-        if ((cells instanceof Array) && data.options.iDisplayLength >= cells.length)
-          options.dom = "<'row'<'col-sm-12'tr>>";
-        // alternatively lean things out for flexdashboard mobile portrait
-        else if (window.FlexDashboard && window.FlexDashboard.isMobilePhone())
-          options.dom = "<'row'<'col-sm-12'f>>" +
-                        "<'row'<'col-sm-12'tr>>"  +
-                        "<'row'<'col-sm-12'p>>";
-      }
+    // Note, this only works on client-side processing mode as on server-side,
+    // cells (data.data) is null; In addition, we require the pageLength option
+    // being provided explicitly to enable this. Despite we may be able to deduce
+    // the default value of pageLength, it may complicate things so we'd rather
+    // put this responsiblity to users and warn them on the R side.
+    if (data.autoHideNavigation === true && data.options.paging !== false) {
+      // strip all nav if length >= cells
+      if ((cells instanceof Array) && data.options.pageLength >= cells.length)
+        options.dom = bootstrapActive ? "<'row'<'col-sm-12'tr>>" : "t";
+      // alternatively lean things out for flexdashboard mobile portrait
+      else if (bootstrapActive && window.FlexDashboard && window.FlexDashboard.isMobilePhone())
+        options.dom = "<'row'<'col-sm-12'f>>" +
+                      "<'row'<'col-sm-12'tr>>"  +
+                      "<'row'<'col-sm-12'p>>";
     }
 
     $.extend(true, options, data.options || {});
@@ -1618,6 +1621,12 @@ HTMLWidgets.widget({
             // to avoid problems like 3.423/100 -> 0.034230000000000003
             return (x / scale).toFixed(d);
           };
+          var slider_min = function() {
+            return filter.noUiSlider('options').range.min;
+          };
+          var slider_max = function() {
+            return filter.noUiSlider('options').range.max;
+          };
           $input.on({
             focus: function() {
               $x0.show().trigger('show');
@@ -1640,7 +1649,7 @@ HTMLWidgets.widget({
               $x0.hide().trigger('hide');
             },
             input: function() {
-              if ($input.val() === '') filter.val([r1, r2]);
+              if ($input.val() === '') filter.val([slider_min(), slider_max()]);
             },
             change: function() {
               var v = $input.val().replace(/\s/g, '');
@@ -1650,8 +1659,8 @@ HTMLWidgets.widget({
                 $input.parent().addClass('has-error');
                 return;
               }
-              if (v[0] === '') v[0] = r1;
-              if (v[1] === '') v[1] = r2;
+              if (v[0] === '') v[0] = slider_min();
+              if (v[1] === '') v[1] = slider_max();
               $input.parent().removeClass('has-error');
               // treat date as UTC time at midnight
               var strTime = function(x) {
@@ -1667,8 +1676,8 @@ HTMLWidgets.widget({
                 v[0] = strTime(v[0]);
                 v[1] = strTime(v[1]);
               }
-              if (v[0] != r1) v[0] *= scale;
-              if (v[1] != r2) v[1] *= scale;
+              if (v[0] != slider_min()) v[0] *= scale;
+              if (v[1] != slider_max()) v[1] *= scale;
               filter.val(v);
             }
           });
@@ -1722,7 +1731,7 @@ HTMLWidgets.widget({
           var updateSlider = function(e) {
             var val = filter.val();
             // turn off filter if in full range
-            $td.data('filter', val[0] > r1 || val[1] < r2);
+            $td.data('filter', val[0] > slider_min() || val[1] < slider_max());
             var v1 = formatDate(val[0]), v2 = formatDate(val[1]), ival;
             if ($td.data('filter')) {
               ival = v1 + ' ... ' + v2;
@@ -1960,7 +1969,7 @@ HTMLWidgets.widget({
       id = el.id + '_' + id;
       if (type) id = id + ':' + type;
       // do not update if the new value is the same as old value
-      if (event !== 'cell_edit' && shinyData.hasOwnProperty(id) && shinyData[id] === JSON.stringify(value))
+      if (event !== 'cell_edit' && !/_clicked$/.test(event) && shinyData.hasOwnProperty(id) && shinyData[id] === JSON.stringify(value))
         return;
       shinyData[id] = JSON.stringify(value);
       if (HTMLWidgets.shinyMode && Shiny.setInputValue) {
@@ -2017,6 +2026,14 @@ HTMLWidgets.widget({
       return {row: info.row, col: info.column};
     }
 
+    var cleanSelectedValues = function() {
+      changeInput('rows_selected', []);
+      changeInput('columns_selected', []);
+      changeInput('cells_selected', transposeArray2D([]), 'shiny.matrix');
+    }
+    // #828 we should clean the selection on the server-side when the table reloads
+    cleanSelectedValues();
+
     // a flag to indicates if select extension is initialized or not
     var flagSelectExt = table.settings()[0]._select !== undefined;
     // the Select extension should only be used in the client mode and
@@ -2052,20 +2069,29 @@ HTMLWidgets.widget({
     }
 
     var selMode = data.selection.mode, selTarget = data.selection.target;
+    var selDisable = data.selection.selectable === false;
     if (inArray(selMode, ['single', 'multiple'])) {
       var selClass = inArray(data.style, ['bootstrap', 'bootstrap4']) ? 'active' : 'selected';
-      var selected = data.selection.selected, selected1, selected2;
       // selected1: row indices; selected2: column indices
-      if (selected === null) {
-        selected1 = selected2 = [];
-      } else if (selTarget === 'row') {
-        selected1 = $.makeArray(selected);
-      } else if (selTarget === 'column') {
-        selected2 = $.makeArray(selected);
-      } else if (selTarget === 'row+column') {
-        selected1 = $.makeArray(selected.rows);
-        selected2 = $.makeArray(selected.cols);
+      var initSel = function(x) {
+        if (x === null || typeof x === 'boolean' || selTarget === 'cell') {
+          return {rows: [], cols: []};
+        } else if (selTarget === 'row') {
+          return {rows: $.makeArray(x), cols: []};
+        } else if (selTarget === 'column') {
+          return {rows: [], cols: $.makeArray(x)};
+        } else if (selTarget === 'row+column') {
+          return {rows: $.makeArray(x.rows), cols: $.makeArray(x.cols)};
+        }
       }
+      var selected = data.selection.selected;
+      var selected1 = initSel(selected).rows, selected2 = initSel(selected).cols;
+      // selectable should contain either all positive or all non-positive values, not both
+      // positive values indicate "selectable" while non-positive values means "nonselectable"
+      // the assertion is performed on R side. (only column indicides could be zero which indicates
+      // the row name)
+      var selectable = data.selection.selectable;
+      var selectable1 = initSel(selectable).rows, selectable2 = initSel(selectable).cols;
 
       // After users reorder the rows or filter the table, we cannot use the table index
       // directly. Instead, we need this function to find out the rows between the two clicks.
@@ -2088,15 +2114,56 @@ HTMLWidgets.widget({
       // row, column, or cell selection
       var lastClickedRow;
       if (inArray(selTarget, ['row', 'row+column'])) {
+        // Get the current selected rows. It will also
+        // update the selected1's value based on the current row selection state
+        // Note we can't put this function inside selectRows() directly,
+        // the reason is method.selectRows() will override selected1's value but this
+        // function will add rows to selected1 (keep the existing selection), which is
+        // inconsistent with column and cell selection.
         var selectedRows = function() {
           var rows = table.rows('.' + selClass);
           var idx = rows.indexes().toArray();
-          if (!server) return addOne(idx);
+          if (!server) {
+            selected1 = addOne(idx);
+            return selected1;
+          }
           idx = idx.map(function(i) {
             return DT_rows_current[i];
           });
           selected1 = selMode === 'multiple' ? unique(selected1.concat(idx)) : idx;
           return selected1;
+        }
+        // Change selected1's value based on selectable1, then refresh the row state
+        var onlyKeepSelectableRows = function() {
+          if (selDisable) { // users can't select; useful when only want backend select
+            selected1 = [];
+            return;
+          }
+          if (selectable1.length === 0) return;
+          var nonselectable = selectable1[0] <= 0;
+          if (nonselectable) {
+            // should make selectable1 positive
+            selected1 = $(selected1).not(selectable1.map(function(i) { return -i; })).get();
+          } else {
+            selected1 = $(selected1).filter(selectable1).get();
+          }
+        }
+        // Change selected1's value based on selectable1, then
+        // refresh the row selection state according to values in selected1
+        var selectRows = function(ignoreSelectable) {
+          if (!ignoreSelectable) onlyKeepSelectableRows();
+          table.$('tr.' + selClass).removeClass(selClass);
+          if (selected1.length === 0) return;
+          if (server) {
+            table.rows({page: 'current'}).every(function() {
+              if (inArray(DT_rows_current[this.index()], selected1)) {
+                $(this.node()).addClass(selClass);
+              }
+            });
+          } else {
+            var selected0 = selected1.map(function(i) { return i - 1; });
+            $(table.rows(selected0).nodes()).addClass(selClass);
+          }
         }
         table.on('mousedown.dt', 'tbody tr', function(e) {
           var $this = $(this), thisRow = table.row(this);
@@ -2149,33 +2216,21 @@ HTMLWidgets.widget({
             // remove id from selected1 since its class .selected has been removed
             if (inArray(id, selected1)) selected1.splice($.inArray(id, selected1), 1);
           }
-          changeInput('rows_selected', selectedRows());
-          changeInput('row_last_clicked', serverRowIndex(thisRow.index()));
+          selectedRows(); // update selected1's value based on selClass
+          selectRows(false); // only keep the selectable rows
+          changeInput('rows_selected', selected1);
+          changeInput('row_last_clicked', serverRowIndex(thisRow.index()), null, null, {priority: 'event'});
           lastClickedRow = serverRowIndex(thisRow.index());
         });
-        changeInput('rows_selected', selected1);
-        var selectRows = function() {
-          table.$('tr.' + selClass).removeClass(selClass);
-          if (selected1.length === 0) return;
-          if (server) {
-            table.rows({page: 'current'}).every(function() {
-              if (inArray(DT_rows_current[this.index()], selected1)) {
-                $(this.node()).addClass(selClass);
-              }
-            });
-          } else {
-            var selected0 = selected1.map(function(i) { return i - 1; });
-            $(table.rows(selected0).nodes()).addClass(selClass);
-          }
-        }
-        selectRows();  // in case users have specified pre-selected rows
+        selectRows(false);  // in case users have specified pre-selected rows
         // restore selected rows after the table is redrawn (e.g. sort/search/page);
         // client-side tables will preserve the selections automatically; for
         // server-side tables, we have to *real* row indices are in `selected1`
-        if (server) table.on('draw.dt', selectRows);
-        methods.selectRows = function(selected) {
+        changeInput('rows_selected', selected1);
+        if (server) table.on('draw.dt', function(e) { selectRows(false); });
+        methods.selectRows = function(selected, ignoreSelectable) {
           selected1 = $.makeArray(selected);
-          selectRows();
+          selectRows(ignoreSelectable);
           changeInput('rows_selected', selected1);
         }
       }
@@ -2183,6 +2238,34 @@ HTMLWidgets.widget({
       if (inArray(selTarget, ['column', 'row+column'])) {
         if (selTarget === 'row+column') {
           $(table.columns().footer()).css('cursor', 'pointer');
+        }
+        // update selected2's value based on selectable2
+        var onlyKeepSelectableCols = function() {
+          if (selDisable) { // users can't select; useful when only want backend select
+            selected2 = [];
+            return;
+          }
+          if (selectable2.length === 0) return;
+          var nonselectable = selectable2[0] <= 0;
+          if (nonselectable) {
+            // need to make selectable2 positive
+            selected2 = $(selected2).not(selectable2.map(function(i) { return -i; })).get();
+          } else {
+            selected2 = $(selected2).filter(selectable2).get();
+          }
+        }
+        // update selected2 and then
+        // refresh the col selection state according to values in selected2
+        var selectCols = function(ignoreSelectable) {
+          if (!ignoreSelectable) onlyKeepSelectableCols();
+          // if selected2 is not a valide index (e.g., larger than the column number)
+          // table.columns(selected2) will fail and result in a blank table
+          // this is different from the table.rows(), where the out-of-range indexes
+          // doesn't affect at all
+          selected2 = $(selected2).filter(table.columns().indexes()).get();
+          table.columns().nodes().flatten().to$().removeClass(selClass);
+          if (selected2.length > 0)
+            table.columns(selected2).nodes().flatten().to$().addClass(selClass);
         }
         var callback = function() {
           var colIdx = selTarget === 'column' ? table.cell(this).index().column :
@@ -2197,6 +2280,7 @@ HTMLWidgets.widget({
             thisCol.addClass(selClass);
             selected2 = selMode === 'single' ? [colIdx] : unique(selected2.concat([colIdx]));
           }
+          selectCols(false); // update selected2 based on selectable
           changeInput('columns_selected', selected2);
         }
         if (selTarget === 'column') {
@@ -2204,49 +2288,51 @@ HTMLWidgets.widget({
         } else {
           $(table.table().footer()).on('click.dt', 'tr th', callback);
         }
+        selectCols(false);  // in case users have specified pre-selected columns
         changeInput('columns_selected', selected2);
-        var selectCols = function() {
-          table.columns().nodes().flatten().to$().removeClass(selClass);
-          if (selected2.length > 0)
-            table.columns(selected2).nodes().flatten().to$().addClass(selClass);
-        }
-        selectCols();  // in case users have specified pre-selected columns
-        if (server) table.on('draw.dt', selectCols);
-        methods.selectColumns = function(selected) {
+        if (server) table.on('draw.dt', function(e) { selectCols(false); });
+        methods.selectColumns = function(selected, ignoreSelectable) {
           selected2 = $.makeArray(selected);
-          selectCols();
+          selectCols(ignoreSelectable);
           changeInput('columns_selected', selected2);
         }
       }
 
       if (selTarget === 'cell') {
-        var selected3;
-        if (selected === null) {
-          selected3 = [];
-        } else {
-          selected3 = selected;
-        }
-        var findIndex = function(ij) {
-          for (var i = 0; i < selected3.length; i++) {
-            if (ij[0] === selected3[i][0] && ij[1] === selected3[i][1]) return i;
+        var selected3 = [], selectable3 = [];
+        if (selected !== null) selected3 = selected;
+        if (selectable !== null && typeof selectable !== 'boolean') selectable3 = selectable;
+        var findIndex = function(ij, sel) {
+          for (var i = 0; i < sel.length; i++) {
+            if (ij[0] === sel[i][0] && ij[1] === sel[i][1]) return i;
           }
           return -1;
         }
-        table.on('click.dt', 'tbody td', function() {
-          var $this = $(this), info = tweakCellIndex(table.cell(this));
-          if ($this.hasClass(selClass)) {
-            $this.removeClass(selClass);
-            selected3.splice(findIndex([info.row, info.col]), 1);
-          } else {
-            if (selMode === 'single') $(table.cells().nodes()).removeClass(selClass);
-            $this.addClass(selClass);
-            selected3 = selMode === 'single' ? [[info.row, info.col]] :
-              unique(selected3.concat([[info.row, info.col]]));
+         // Change selected3's value based on selectable3, then refresh the cell state
+        var onlyKeepSelectableCells = function() {
+          if (selDisable) { // users can't select; useful when only want backend select
+            selected3 = [];
+            return;
           }
-          changeInput('cells_selected', transposeArray2D(selected3), 'shiny.matrix');
-        });
-        changeInput('cells_selected', transposeArray2D(selected3), 'shiny.matrix');
-        var selectCells = function() {
+          if (selectable3.length === 0) return;
+          var nonselectable = selectable3[0][0] <= 0;
+          var out = [];
+          if (nonselectable) {
+            selected3.map(function(ij) {
+              // should make selectable3 positive
+              if (findIndex([-ij[0], -ij[1]], selectable3) === -1) { out.push(ij); }
+            });
+          } else {
+            selected3.map(function(ij) {
+              if (findIndex(ij, selectable3) > -1) { out.push(ij); }
+            });
+          }
+          selected3 = out;
+        }
+        // Change selected3's value based on selectable3, then
+        // refresh the cell selection state according to values in selected3
+        var selectCells = function(ignoreSelectable) {
+          if (!ignoreSelectable) onlyKeepSelectableCells();
           table.$('td.' + selClass).removeClass(selClass);
           if (selected3.length === 0) return;
           if (server) {
@@ -2261,11 +2347,27 @@ HTMLWidgets.widget({
             });
           }
         };
-        selectCells();  // in case users have specified pre-selected columns
-        if (server) table.on('draw.dt', selectCells);
-        methods.selectCells = function(selected) {
+        table.on('click.dt', 'tbody td', function() {
+          var $this = $(this), info = tweakCellIndex(table.cell(this));
+          if ($this.hasClass(selClass)) {
+            $this.removeClass(selClass);
+            selected3.splice(findIndex([info.row, info.col], selected3), 1);
+          } else {
+            if (selMode === 'single') $(table.cells().nodes()).removeClass(selClass);
+            $this.addClass(selClass);
+            selected3 = selMode === 'single' ? [[info.row, info.col]] :
+              unique(selected3.concat([[info.row, info.col]]));
+          }
+          selectCells(false); // must call this to update selected3 based on selectable3
+          changeInput('cells_selected', transposeArray2D(selected3), 'shiny.matrix');
+        });
+        selectCells(false);  // in case users have specified pre-selected columns
+        changeInput('cells_selected', transposeArray2D(selected3), 'shiny.matrix');
+
+        if (server) table.on('draw.dt', function(e) { selectCells(false); });
+        methods.selectCells = function(selected, ignoreSelectable) {
           selected3 = selected ? selected : [];
-          selectCells();
+          selectCells(ignoreSelectable);
           changeInput('cells_selected', transposeArray2D(selected3), 'shiny.matrix');
         }
       }
@@ -2317,7 +2419,7 @@ HTMLWidgets.widget({
     }
     // the current cell clicked on
     table.on('click.dt', 'tbody td', function() {
-      changeInput('cell_clicked', cellInfo(this));
+      changeInput('cell_clicked', cellInfo(this), null, null, {priority: 'event'});
     })
     changeInput('cell_clicked', {});
 
@@ -2326,16 +2428,16 @@ HTMLWidgets.widget({
       if (this.className === '') e.stopPropagation();
     });
 
-    methods.addRow = function(data, rowname) {
-      var data0 = table.row(0).data(), n = data0.length, d = n - data.length;
+    methods.addRow = function(data, rowname, resetPaging) {
+      var n = table.columns().indexes().length, d = n - data.length;
       if (d === 1) {
         data = rowname.concat(data)
       } else if (d !== 0) {
         console.log(data);
-        console.log(data0);
+        console.log(table.columns().indexes());
         throw 'New data must be of the same length as current data (' + n + ')';
       };
-      table.row.add(data).draw();
+      table.row.add(data).draw(resetPaging);
     }
 
     methods.updateSearch = function(keywords) {
@@ -2665,6 +2767,15 @@ padding-right: inherit;
 <script>!function o(u,a,l){function s(n,e){if(!a[n]){if(!u[n]){var t="function"==typeof require&&require;if(!e&&t)return t(n,!0);if(f)return f(n,!0);var r=new Error("Cannot find module '"+n+"'");throw r.code="MODULE_NOT_FOUND",r}var i=a[n]={exports:{}};u[n][0].call(i.exports,function(e){var t=u[n][1][e];return s(t||e)},i,i.exports,o,u,a,l)}return a[n].exports}for(var f="function"==typeof require&&require,e=0;e<l.length;e++)s(l[e]);return s}({1:[function(e,t,n){"use strict";Object.defineProperty(n,"__esModule",{value:!0});var r=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}();var i=function(){function e(){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,e),this._types={},this._seq=0}return r(e,[{key:"on",value:function(e,t){var n=this._types[e];n||(n=this._types[e]={});var r="sub"+this._seq++;return n[r]=t,r}},{key:"off",value:function(e,t){var n=this._types[e];if("function"==typeof t){for(var r in n)if(n.hasOwnProperty(r)&&n[r]===t)return delete n[r],r;return!1}if("string"==typeof t)return!(!n||!n[t])&&(delete n[t],t);throw new Error("Unexpected type for listener")}},{key:"trigger",value:function(e,t,n){var r=this._types[e];for(var i in r)r.hasOwnProperty(i)&&r[i].call(n,t)}}]),e}();n.default=i},{}],2:[function(e,t,n){"use strict";Object.defineProperty(n,"__esModule",{value:!0}),n.FilterHandle=void 0;var r=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}(),i=l(e("./events")),o=l(e("./filterset")),u=l(e("./group")),a=function(e){{if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[n]=e[n]);return t.default=e,t}}(e("./util"));function l(e){return e&&e.__esModule?e:{default:e}}var s=1;n.FilterHandle=function(){function n(e,t){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,n),this._eventRelay=new i.default,this._emitter=new a.SubscriptionTracker(this._eventRelay),this._group=null,this._filterSet=null,this._filterVar=null,this._varOnChangeSub=null,this._extraInfo=a.extend({sender:this},t),this._id="filter"+s++,this.setGroup(e)}return r(n,[{key:"setGroup",value:function(e){var t,n,r=this;if(this._group!==e&&((this._group||e)&&(this._filterVar&&(this._filterVar.off("change",this._varOnChangeSub),this.clear(),this._varOnChangeSub=null,this._filterVar=null,this._filterSet=null),this._group=e))){e=(0,u.default)(e),this._filterSet=(t=e.var("filterset"),(n=t.get())||(n=new o.default,t.set(n)),n),this._filterVar=(0,u.default)(e).var("filter");var i=this._filterVar.on("change",function(e){r._eventRelay.trigger("change",e,r)});this._varOnChangeSub=i}}},{key:"_mergeExtraInfo",value:function(e){return a.extend({},this._extraInfo?this._extraInfo:null,e||null)}},{key:"close",value:function(){this._emitter.removeAllListeners(),this.clear(),this.setGroup(null)}},{key:"clear",value:function(e){this._filterSet&&(this._filterSet.clear(this._id),this._onChange(e))}},{key:"set",value:function(e,t){this._filterSet&&(this._filterSet.update(this._id,e),this._onChange(t))}},{key:"on",value:function(e,t){return this._emitter.on(e,t)}},{key:"off",value:function(e,t){return this._emitter.off(e,t)}},{key:"_onChange",value:function(e){this._filterSet&&this._filterVar.set(this._filterSet.value,this._mergeExtraInfo(e))}},{key:"filteredKeys",get:function(){return this._filterSet?this._filterSet.value:null}}]),n}()},{"./events":1,"./filterset":3,"./group":4,"./util":11}],3:[function(e,t,n){"use strict";Object.defineProperty(n,"__esModule",{value:!0});var r=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}(),a=e("./util");function l(e,t){return e===t?0:e<t?-1:t<e?1:void 0}var i=function(){function e(){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,e),this.reset()}return r(e,[{key:"reset",value:function(){this._handles={},this._keys={},this._value=null,this._activeHandles=0}},{key:"update",value:function(e,t){null!==t&&(t=t.slice(0)).sort(l);var n=(0,a.diffSortedLists)(this._handles[e],t),r=n.added,i=n.removed;this._handles[e]=t;for(var o=0;o<r.length;o++)this._keys[r[o]]=(this._keys[r[o]]||0)+1;for(var u=0;u<i.length;u++)this._keys[i[u]]--;this._updateValue(t)}},{key:"_updateValue",value:function(){var e=0<arguments.length&&void 0!==arguments[0]?arguments[0]:this._allKeys,t=Object.keys(this._handles).length;if(0===t)this._value=null;else{this._value=[];for(var n=0;n<e.length;n++){this._keys[e[n]]===t&&this._value.push(e[n])}}}},{key:"clear",value:function(e){if(void 0!==this._handles[e]){var t=this._handles[e];t||(t=[]);for(var n=0;n<t.length;n++)this._keys[t[n]]--;delete this._handles[e],this._updateValue()}}},{key:"value",get:function(){return this._value}},{key:"_allKeys",get:function(){var e=Object.keys(this._keys);return e.sort(l),e}}]),e}();n.default=i},{"./util":11}],4:[function(l,e,s){(function(e){"use strict";Object.defineProperty(s,"__esModule",{value:!0});var n=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}(),r="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(e){return typeof e}:function(e){return e&&"function"==typeof Symbol&&e.constructor===Symbol&&e!==Symbol.prototype?"symbol":typeof e};s.default=function e(t){{if(t&&"string"==typeof t)return u.hasOwnProperty(t)||(u[t]=new a(t)),u[t];if("object"===(void 0===t?"undefined":r(t))&&t._vars&&t.var)return t;if(Array.isArray(t)&&1==t.length&&"string"==typeof t[0])return e(t[0]);throw new Error("Invalid groupName argument")}};var t,i=l("./var"),o=(t=i)&&t.__esModule?t:{default:t};e.__crosstalk_groups=e.__crosstalk_groups||{};var u=e.__crosstalk_groups;var a=function(){function t(e){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,t),this.name=e,this._vars={}}return n(t,[{key:"var",value:function(e){if(!e||"string"!=typeof e)throw new Error("Invalid var name");return this._vars.hasOwnProperty(e)||(this._vars[e]=new o.default(this,e)),this._vars[e]}},{key:"has",value:function(e){if(!e||"string"!=typeof e)throw new Error("Invalid var name");return this._vars.hasOwnProperty(e)}}]),t}()}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{"./var":12}],5:[function(f,e,c){(function(e){"use strict";Object.defineProperty(c,"__esModule",{value:!0});var t,n=f("./group"),r=(t=n)&&t.__esModule?t:{default:t},i=f("./selection"),o=f("./filter"),u=f("./input");f("./input_selectize"),f("./input_checkboxgroup"),f("./input_slider");var a=(0,r.default)("default");function l(e){return a.var(e)}e.Shiny&&e.Shiny.addCustomMessageHandler("update-client-value",function(e){"string"==typeof e.group?(0,r.default)(e.group).var(e.name).set(e.value):l(e.name).set(e.value)});var s={group:r.default,var:l,has:function(e){return a.has(e)},SelectionHandle:i.SelectionHandle,FilterHandle:o.FilterHandle,bind:u.bind};c.default=s,e.crosstalk=s}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{"./filter":2,"./group":4,"./input":6,"./input_checkboxgroup":7,"./input_selectize":8,"./input_slider":9,"./selection":10}],6:[function(e,t,a){(function(t){"use strict";Object.defineProperty(a,"__esModule",{value:!0}),a.register=function(e){r[e.className]=e,t.document&&"complete"!==t.document.readyState?o(function(){n()}):t.document&&setTimeout(n,100)},a.bind=n;var o=t.jQuery,r={};function n(){Object.keys(r).forEach(function(e){var n=r[e];o("."+n.className).not(".crosstalk-input-bound").each(function(e,t){i(n,t)})})}function i(e,t){var n=o(t).find("script[type='application/json'][data-for='"+t.id.replace(/([!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~])/g,"\\$1")+"']"),r=JSON.parse(n[0].innerText),i=e.factory(t,r);o(t).data("crosstalk-instance",i),o(t).addClass("crosstalk-input-bound")}if(t.Shiny){var e=new t.Shiny.InputBinding,u=t.jQuery;u.extend(e,{find:function(e){return u(e).find(".crosstalk-input")},initialize:function(e){var t,n;u(e).hasClass("crosstalk-input-bound")||(n=o(t=e),Object.keys(r).forEach(function(e){n.hasClass(e)&&!n.hasClass("crosstalk-input-bound")&&i(r[e],t)}))},getId:function(e){return e.id},getValue:function(e){},setValue:function(e,t){},receiveMessage:function(e,t){},subscribe:function(e,t){u(e).data("crosstalk-instance").resume()},unsubscribe:function(e){u(e).data("crosstalk-instance").suspend()}}),t.Shiny.inputBindings.register(e,"crosstalk.inputBinding")}}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{}],7:[function(r,e,t){(function(e){"use strict";var t=function(e){{if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[n]=e[n]);return t.default=e,t}}(r("./input")),n=r("./filter");var a=e.jQuery;t.register({className:"crosstalk-input-checkboxgroup",factory:function(e,r){var i=new n.FilterHandle(r.group),o=void 0,u=a(e);return u.on("change","input[type='checkbox']",function(){var e=u.find("input[type='checkbox']:checked");if(0===e.length)o=null,i.clear();else{var t={};e.each(function(){r.map[this.value].forEach(function(e){t[e]=!0})});var n=Object.keys(t);n.sort(),o=n,i.set(n)}}),{suspend:function(){i.clear()},resume:function(){o&&i.set(o)}}}})}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{"./filter":2,"./input":6}],8:[function(r,e,t){(function(e){"use strict";var t=n(r("./input")),l=n(r("./util")),s=r("./filter");function n(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[n]=e[n]);return t.default=e,t}var f=e.jQuery;t.register({className:"crosstalk-input-select",factory:function(e,n){var t=l.dataframeToD3(n.items),r={options:[{value:"",label:"(All)"}].concat(t),valueField:"value",labelField:"label",searchField:"label"},i=f(e).find("select")[0],o=f(i).selectize(r)[0].selectize,u=new s.FilterHandle(n.group),a=void 0;return o.on("change",function(){if(0===o.items.length)a=null,u.clear();else{var t={};o.items.forEach(function(e){n.map[e].forEach(function(e){t[e]=!0})});var e=Object.keys(t);e.sort(),a=e,u.set(e)}}),{suspend:function(){u.clear()},resume:function(){a&&u.set(a)}}}})}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{"./filter":2,"./input":6,"./util":11}],9:[function(n,e,t){(function(e){"use strict";var d=function(e,t){if(Array.isArray(e))return e;if(Symbol.iterator in Object(e))return function(e,t){var n=[],r=!0,i=!1,o=void 0;try{for(var u,a=e[Symbol.iterator]();!(r=(u=a.next()).done)&&(n.push(u.value),!t||n.length!==t);r=!0);}catch(e){i=!0,o=e}finally{try{!r&&a.return&&a.return()}finally{if(i)throw o}}return n}(e,t);throw new TypeError("Invalid attempt to destructure non-iterable instance")},t=function(e){{if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[n]=e[n]);return t.default=e,t}}(n("./input")),a=n("./filter");var v=e.jQuery,p=e.strftime;function y(e,t){for(var n=e.toString();n.length<t;)n="0"+n;return n}t.register({className:"crosstalk-input-slider",factory:function(e,l){var s=new a.FilterHandle(l.group),t={},f=v(e).find("input"),n=f.data("data-type"),r=f.data("time-format"),i=f.data("round"),o=void 0;if("date"===n)o=p.utc(),t.prettify=function(e){return o(r,new Date(e))};else if("datetime"===n){var u=f.data("timezone");o=u?p.timezone(u):p,t.prettify=function(e){return o(r,new Date(e))}}else"number"===n&&void 0!==i&&(t.prettify=function(e){var t=Math.pow(10,i);return Math.round(e*t)/t});function c(){var e=f.data("ionRangeSlider").result,t=void 0,n=f.data("data-type");return t="date"===n?function(e){return(t=new Date(+e))instanceof Date?t.getUTCFullYear()+"-"+y(t.getUTCMonth()+1,2)+"-"+y(t.getUTCDate(),2):null;var t}:"datetime"===n?function(e){return+e/1e3}:function(e){return+e},"double"===f.data("ionRangeSlider").options.type?[t(e.from),t(e.to)]:t(e.from)}f.ionRangeSlider(t);var h=null;return f.on("change.crosstalkSliderInput",function(e){if(!f.data("updating")&&!f.data("animating")){for(var t=c(),n=d(t,2),r=n[0],i=n[1],o=[],u=0;u<l.values.length;u++){var a=l.values[u];r<=a&&a<=i&&o.push(l.keys[u])}o.sort(),s.set(o),h=o}}),{suspend:function(){s.clear()},resume:function(){h&&s.set(h)}}}})}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{"./filter":2,"./input":6}],10:[function(e,t,n){"use strict";Object.defineProperty(n,"__esModule",{value:!0}),n.SelectionHandle=void 0;var r=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}(),i=a(e("./events")),o=a(e("./group")),u=function(e){{if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[n]=e[n]);return t.default=e,t}}(e("./util"));function a(e){return e&&e.__esModule?e:{default:e}}n.SelectionHandle=function(){function n(){var e=0<arguments.length&&void 0!==arguments[0]?arguments[0]:null,t=1<arguments.length&&void 0!==arguments[1]?arguments[1]:null;!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,n),this._eventRelay=new i.default,this._emitter=new u.SubscriptionTracker(this._eventRelay),this._group=null,this._var=null,this._varOnChangeSub=null,this._extraInfo=u.extend({sender:this},t),this.setGroup(e)}return r(n,[{key:"setGroup",value:function(e){var t=this;if(this._group!==e&&(this._group||e)&&(this._var&&(this._var.off("change",this._varOnChangeSub),this._var=null,this._varOnChangeSub=null),this._group=e)){this._var=(0,o.default)(e).var("selection");var n=this._var.on("change",function(e){t._eventRelay.trigger("change",e,t)});this._varOnChangeSub=n}}},{key:"_mergeExtraInfo",value:function(e){return u.extend({},this._extraInfo?this._extraInfo:null,e||null)}},{key:"set",value:function(e,t){this._var&&this._var.set(e,this._mergeExtraInfo(t))}},{key:"clear",value:function(e){this._var&&this.set(void 0,this._mergeExtraInfo(e))}},{key:"on",value:function(e,t){return this._emitter.on(e,t)}},{key:"off",value:function(e,t){return this._emitter.off(e,t)}},{key:"close",value:function(){this._emitter.removeAllListeners(),this.setGroup(null)}},{key:"value",get:function(){return this._var?this._var.get():null}}]),n}()},{"./events":1,"./group":4,"./util":11}],11:[function(e,t,n){"use strict";Object.defineProperty(n,"__esModule",{value:!0});var r=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}(),l="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(e){return typeof e}:function(e){return e&&"function"==typeof Symbol&&e.constructor===Symbol&&e!==Symbol.prototype?"symbol":typeof e};function u(e){for(var t=1;t<e.length;t++)if(e[t]<=e[t-1])throw new Error("List is not sorted or contains duplicate")}n.extend=function(e){for(var t=arguments.length,n=Array(1<t?t-1:0),r=1;r<t;r++)n[r-1]=arguments[r];for(var i=0;i<n.length;i++){var o=n[i];if(null!=o)for(var u in o)o.hasOwnProperty(u)&&(e[u]=o[u])}return e},n.checkSorted=u,n.diffSortedLists=function(e,t){var n=0,r=0;e||(e=[]);t||(t=[]);var i=[],o=[];u(e),u(t);for(;n<e.length&&r<t.length;)e[n]===t[r]?(n++,r++):e[n]<t[r]?i.push(e[n++]):o.push(t[r++]);n<e.length&&(i=i.concat(e.slice(n)));r<t.length&&(o=o.concat(t.slice(r)));return{removed:i,added:o}},n.dataframeToD3=function(e){var t=[],n=void 0;for(var r in e){if(e.hasOwnProperty(r)&&t.push(r),"object"!==l(e[r])||void 0===e[r].length)throw new Error("All fields must be arrays");if(void 0!==n&&n!==e[r].length)throw new Error("All fields must be arrays of the same length");n=e[r].length}for(var i=[],o=void 0,u=0;u<n;u++){o={};for(var a=0;a<t.length;a++)o[t[a]]=e[t[a]][u];i.push(o)}return i};n.SubscriptionTracker=function(){function t(e){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,t),this._emitter=e,this._subs={}}return r(t,[{key:"on",value:function(e,t){var n=this._emitter.on(e,t);return this._subs[n]=e,n}},{key:"off",value:function(e,t){var n=this._emitter.off(e,t);return n&&delete this._subs[n],n}},{key:"removeAllListeners",value:function(){var t=this,n=this._subs;this._subs={},Object.keys(n).forEach(function(e){t._emitter.off(n[e],e)})}}]),t}()},{}],12:[function(a,e,l){(function(o){"use strict";Object.defineProperty(l,"__esModule",{value:!0});var e,u="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(e){return typeof e}:function(e){return e&&"function"==typeof Symbol&&e.constructor===Symbol&&e!==Symbol.prototype?"symbol":typeof e},t=function(){function r(e,t){for(var n=0;n<t.length;n++){var r=t[n];r.enumerable=r.enumerable||!1,r.configurable=!0,"value"in r&&(r.writable=!0),Object.defineProperty(e,r.key,r)}}return function(e,t,n){return t&&r(e.prototype,t),n&&r(e,n),e}}(),n=a("./events"),i=(e=n)&&e.__esModule?e:{default:e};var r=function(){function r(e,t,n){!function(e,t){if(!(e instanceof t))throw new TypeError("Cannot call a class as a function")}(this,r),this._group=e,this._name=t,this._value=n,this._events=new i.default}return t(r,[{key:"get",value:function(){return this._value}},{key:"set",value:function(e,t){if(this._value!==e){var n=this._value;this._value=e;var r={};if(t&&"object"===(void 0===t?"undefined":u(t)))for(var i in t)t.hasOwnProperty(i)&&(r[i]=t[i]);r.oldValue=n,r.value=e,this._events.trigger("change",r,this),o.Shiny&&o.Shiny.onInputChange&&o.Shiny.onInputChange(".clientValue-"+(null!==this._group.name?this._group.name+"-":"")+this._name,void 0===e?null:e)}}},{key:"on",value:function(e,t){return this._events.on(e,t)}},{key:"off",value:function(e,t){return this._events.off(e,t)}}]),r}();l.default=r}).call(this,"undefined"!=typeof global?global:"undefined"!=typeof self?self:"undefined"!=typeof window?window:{})},{"./events":1}]},{},[5]);
 //# sourceMappingURL=crosstalk.min.js.map</script>
 
+<style type="text/css">
+  code{white-space: pre-wrap;}
+  span.smallcaps{font-variant: small-caps;}
+  span.underline{text-decoration: underline;}
+  div.column{display: inline-block; vertical-align: top; width: 50%;}
+  div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+  ul.task-list{list-style: none;}
+    </style>
+
 <style type="text/css">code{white-space: pre;}</style>
 <style type="text/css">
   pre:not([class]) {
@@ -2709,6 +2820,7 @@ h6 {
   text-align: left;
 }
 </style>
+
 
 
 
@@ -2818,7 +2930,7 @@ summary {
 
 
 
-<h1 class="title toc-ignore">Accessing the Allele Frequency Net Database using <em>AFNDquery</em></h1>
+<h1 class="title toc-ignore">Accessing the Allele Frequency Net Database using <code>AFNDquery</code></h1>
 <h4 class="author">Katharina Imkeller</h4>
 <address class="author_afil">
 European Molecular Biology Laboratory, Heidelberg<br><a class="author_email" href="mailto:#"><a href="mailto:imkeller@embl.de" class="email">imkeller@embl.de</a></a>
@@ -2830,9 +2942,14 @@ European Molecular Biology Laboratory, Heidelberg<br><a class="author_email" hre
 <pre class="r"><code>library(AFNDquery)</code></pre>
 <div id="introduction" class="section level2">
 <h2>Introduction</h2>
-<p>The Allele Frequency Net Database (<a href="http://www.allelefrequencies.net/" class="uri">http://www.allelefrequencies.net/</a>) is a repository for immune gene frequencies in different populations worldwide. This package allows the automated R access to the HLA related data within the Allele Frequency Net Database. The query principle of this package currently relies on parsing information from the html-formated pages of the online resource.</p>
-<p>Citing the Allele Frequency Net Database:\Allele frequency net 2015 update: new features for HLA epitopes, KIR and disease and HLA adverse drug reaction associations. Gonzalez-Galarza FF, Takeshita LY, Santos EJ, Kempson F, Maia MH, Silva AL, Silva AL, Ghattaoraya GS, Alfirevic A, Jones AR and Middleton D Nucleic Acid Research 2015, 28, D784-8.</p>
-<p>The HLA frequency datasets in the Allele Frequency Net Database are classified according to the following standards:</p>
+<div id="hyperpolymorphic-hla-genes-in-human-populations" class="section level3">
+<h3>Hyperpolymorphic HLA genes in human populations</h3>
+<p>MHC (major histocompatibility complex) molecules are cell surface complexes that present peptide antigens to T cells. This processed, also known as MHC-dependent antigen presentation, is essential for the coordination of adaptive immune responses. In humans, MHC molecules are encoded by highly variable HLA (human leukocyte antigen) genes encoded in the hyperpolymorphic HLA locus on chromosome 6. The library of peptide antigens presented on MHC molecule highly depends on the HLA alleles genes present in an individual. The frequencies of individual HLA alleles varies substantially between worldwide human populations.</p>
+</div>
+<div id="databases-for-hla-allele-frequencies-in-human-populations" class="section level3">
+<h3>Databases for HLA allele frequencies in human populations</h3>
+<p>The Allele Frequency Net Database (AFND, <a href="http://www.allelefrequencies.net/" class="uri">http://www.allelefrequencies.net/</a>) is a repository for immune gene frequencies in different populations worldwide (Gonzalez-Galarza et al. 2020). In addition to a large collection of HLA alle frequency datasets, the database also contains datasets for allele frequencies of KIR (Killer Cell Immunoglobulin-like Receptor) genes, MIC (Major histocompatibility complex class I chain related) and cytokine genes. The current version of AFNDquery allows the automated R access to the HLA related datasets in AFND.</p>
+<p>The HLA frequency datasets in AFND are classified according to the following standards:</p>
 <table>
 <colgroup>
 <col width="18%"></col>
@@ -2870,31 +2987,32 @@ European Molecular Biology Laboratory, Heidelberg<br><a class="author_email" hre
 </tbody>
 </table>
 </div>
+</div>
 <div id="scope-of-the-afndquery-package" class="section level2">
-<h2>Scope of the AFNDquery package</h2>
-<p>The pAFNDquery package currently supports the following type of queries:</p>
+<h2>Scope of the <code>AFNDquery</code> package</h2>
+<p>The <code>AFNDquery</code> package currently supports the following type of queries related to HLA allele frequencies:</p>
 <ol style="list-style-type: decimal">
-<li><p>Query the <strong>HLA allele frequencies</strong> for a given HLA locus, population, sample size (and other available filters). This module returns information contained in the <em>HLA</em> section of the Allele Frequency Net Database (allele frequency, population name and id, sample size). The queries can basically be tha same as the ones entered into the online user interface at <a href="http://www.allelefrequencies.net/hla6006a.asp" class="uri">http://www.allelefrequencies.net/hla6006a.asp</a></p></li>
-<li><p>Query the <strong>population metainformation</strong> for a given population. This module returns information contained in the <em>Population</em> section of the Allele Frequency Net Database (ethnic origin, geographic location, sampling size and date, …). For the HLA allele dataset of a population in Smolensk, Russia, this page can be found here: <a href="http://www.allelefrequencies.net/pop6001c.asp?pop_id=0002645" class="uri">http://www.allelefrequencies.net/pop6001c.asp?pop_id=0002645</a></p></li>
+<li><p>Query the <strong>HLA allele frequencies</strong> for a given HLA locus, population, sample size (and other available filters). This module returns information contained in the <em>HLA</em> section of AFND (allele frequency, population name and id, sample size).</p></li>
+<li><p>Query the <strong>population metainformation</strong> for a given population. This module returns information contained in the <em>Population</em> section of the Allele Frequency Net Database (ethnic origin, geographic location, sampling size and date, …).</p></li>
 </ol>
 </div>
 <div id="querying-allele-frequencies" class="section level2">
 <h2>Querying allele frequencies</h2>
-<p><strong>Example 1:</strong> Querying the freqeuncy of allele A*02:01 in all populations with more than 10,000 individuals and fulfilling the gold standard.</p>
+<p><strong>Example 1:</strong> Querying the frequency of allele A*02:01 in all populations with more than 10,000 individuals and fulfilling the gold standard.</p>
 <pre class="r"><code>sel1 &lt;- query_allele_frequencies(hla_selection = &quot;A*02:01&quot;, 
                                 hla_sample_size_pattern = &quot;bigger_than&quot;, 
                                 hla_sample_size = 10000, 
                                 standard=&quot;g&quot;)
 
 DT::datatable(sel1)</code></pre>
-<div id="htmlwidget-26925a34ad8ab57c97a8" style="width:100%;height:auto;" class="datatables html-widget"></div>
-<script type="application/json" data-for="htmlwidget-26925a34ad8ab57c97a8">{"x":{"filter":"none","data":[["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"],["A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01"],["Germany pop 8","Israel Arab pop 2","Israel Iraq Jews","Israel Morocco Jews","Israel Poland Jews","Israel USSR Jews","Israel YemenJews","Japan pop 16","Poland DKMS","USA NMDP African","USA NMDP African American pop 2","USA NMDP Caribean Black","USA NMDP Caribean Hispanic","USA NMDP Caribean Indian","USA NMDP Chinese","USA NMDP European Caucasian","USA NMDP Filipino","USA NMDP Hawaiian or other Pacific Islander","USA NMDP Hispanic South or Central American","USA NMDP Korean","USA NMDP Mexican or Chicano","USA NMDP Middle Eastern or North Coast of Africa","USA NMDP North American Amerindian","USA NMDP South Asian Indian","USA NMDP Southeast Asian","USA NMDP Vietnamese"],[0.2667,0.1498,0.0192,0.0248,0.1839,0.2168,0.0271,0.1162,0.2849,0.1146,0.1235,0.1107,0.1688,0.145,0.0946,0.2755,0.0671,0.1198,0.2095,0.1857,0.223,0.1973,0.2776,0.0492,0.0578,0.0349],["39,689","12,301","13,270","36,718","13,871","45,681","15,542","18,604","20,653","28,557","416,581","33,328","115,374","14,339","99,672","1,242,890","50,614","11,499","146,714","77,584","261,235","70,890","35,791","185,391","27,978","43,540"],["3089","3390","3382","3379","3378","3375","3374","3136","2850","3202","3201","3207","3208","3209","3217","3210","3211","3212","3218","3214","3216","3215","3206","3223","3222","3220"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>allele<\/th>\n      <th>population<\/th>\n      <th>allele_frequency<\/th>\n      <th>sample_size<\/th>\n      <th>population_id<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":3},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-cc6b5dfdbe144725f165" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-cc6b5dfdbe144725f165">{"x":{"filter":"none","data":[["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"],["A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01","A*02:01"],["Germany pop 8","Israel Arab pop 2","Israel Iraq Jews","Israel Morocco Jews","Israel Poland Jews","Israel USSR Jews","Israel YemenJews","Japan pop 16","Poland DKMS","USA NMDP African","USA NMDP African American pop 2","USA NMDP Caribean Black","USA NMDP Caribean Hispanic","USA NMDP Caribean Indian","USA NMDP Chinese","USA NMDP European Caucasian","USA NMDP Filipino","USA NMDP Hawaiian or other Pacific Islander","USA NMDP Hispanic South or Central American","USA NMDP Korean","USA NMDP Mexican or Chicano","USA NMDP Middle Eastern or North Coast of Africa","USA NMDP North American Amerindian","USA NMDP South Asian Indian","USA NMDP Southeast Asian","USA NMDP Vietnamese"],[0.2667,0.1498,0.0192,0.0248,0.1839,0.2168,0.0271,0.1162,0.2849,0.1146,0.1235,0.1107,0.1688,0.145,0.0946,0.2755,0.0671,0.1198,0.2095,0.1857,0.223,0.1973,0.2776,0.0492,0.0578,0.0349],["39,689","12,301","13,270","36,718","13,871","45,681","15,542","18,604","20,653","28,557","416,581","33,328","115,374","14,339","99,672","1,242,890","50,614","11,499","146,714","77,584","261,235","70,890","35,791","185,391","27,978","43,540"],["3089","3390","3382","3379","3378","3375","3374","3136","2850","3202","3201","3207","3208","3209","3217","3210","3211","3212","3218","3214","3216","3215","3206","3223","3222","3220"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>allele<\/th>\n      <th>population<\/th>\n      <th>allele_frequency<\/th>\n      <th>sample_size<\/th>\n      <th>population_id<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":3},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
 <p><strong>Example 2:</strong> Querying the frequencies of alleles within the HLA-B locus for population “Peru Lamas City Lama” with population_id 1986. If you are not sure which population_id you should use, we recommend to search your population of interest in the <em>Population</em> section of the Allele Frequency Net Database and extract the population id from the url (last 4 digits).</p>
 <pre class="r"><code>sel2 &lt;- query_allele_frequencies(hla_locus = &quot;B&quot;, hla_population = 1986)
 
 DT::datatable(sel2)</code></pre>
-<div id="htmlwidget-57d9fbdea7357f373363" style="width:100%;height:auto;" class="datatables html-widget"></div>
-<script type="application/json" data-for="htmlwidget-57d9fbdea7357f373363">{"x":{"filter":"none","data":[["1","2","3","4","5","6","7","8","9","10","11","12"],["B*14","B*15","B*35","B*38","B*39","B*40","B*41","B*44","B*48","B*51","B*52","B*53"],["Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama"],[0.024,0.042,0.181,0.024,0.193,0.181,0.042,0.006,0.247,0.024,0.012,0.012],[83,83,83,83,83,83,83,83,83,83,83,83],["1986","1986","1986","1986","1986","1986","1986","1986","1986","1986","1986","1986"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>allele<\/th>\n      <th>population<\/th>\n      <th>allele_frequency<\/th>\n      <th>sample_size<\/th>\n      <th>population_id<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":[3,4]},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-6cfa09027bcc1683d37d" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-6cfa09027bcc1683d37d">{"x":{"filter":"none","data":[["1","2","3","4","5","6","7","8","9","10","11","12"],["B*14","B*15","B*35","B*38","B*39","B*40","B*41","B*44","B*48","B*51","B*52","B*53"],["Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama","Peru Lamas City Lama"],[0.024,0.042,0.181,0.024,0.193,0.181,0.042,0.006,0.247,0.024,0.012,0.012],[83,83,83,83,83,83,83,83,83,83,83,83],["1986","1986","1986","1986","1986","1986","1986","1986","1986","1986","1986","1986"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>allele<\/th>\n      <th>population<\/th>\n      <th>allele_frequency<\/th>\n      <th>sample_size<\/th>\n      <th>population_id<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"columnDefs":[{"className":"dt-right","targets":[3,4]},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
 </div>
 <div id="querying-population-metainformation" class="section level2">
 <h2>Querying population metainformation</h2>
@@ -2902,14 +3020,21 @@ DT::datatable(sel2)</code></pre>
 <pre class="r"><code>sel3 &lt;- query_population_detail(1986)
 
 DT::datatable(sel3, options = list(scrollX = TRUE))</code></pre>
-<div id="htmlwidget-9bfc022cb5fc9f96bb36" style="width:100%;height:auto;" class="datatables html-widget"></div>
-<script type="application/json" data-for="htmlwidget-9bfc022cb5fc9f96bb36">{"x":{"filter":"none","data":[["1"],[1986],["Amerindian"],["South and Central America"],["6º 25' S"],["76º 32' W"],["Grandparents live at same location"],["Urban"],["83"],["2004"],[""],["Blood Donor"],["A, B, DQB1, DRB1"],[".."]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>population_id<\/th>\n      <th>Ethnic.origin<\/th>\n      <th>Geographic.Region<\/th>\n      <th>Latitude<\/th>\n      <th>Longitude<\/th>\n      <th>Family<\/th>\n      <th>Urban.Rural<\/th>\n      <th>Sample.Size<\/th>\n      <th>Test.date<\/th>\n      <th>Method.s.<\/th>\n      <th>Source<\/th>\n      <th>Loci.typed<\/th>\n      <th>Additional.notes<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"scrollX":true,"columnDefs":[{"className":"dt-right","targets":1},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-110c478e2f7163551508" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-110c478e2f7163551508">{"x":{"filter":"none","data":[["1"],[1986],["Amerindian"],["South and Central America"],["6º 25' S"],["76º 32' W"],["Grandparents live at same location"],["Urban"],["83"],["2004"],[""],["Blood Donor"],["A, B, DQB1, DRB1"],[".."]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>population_id<\/th>\n      <th>Ethnic.origin<\/th>\n      <th>Geographic.Region<\/th>\n      <th>Latitude<\/th>\n      <th>Longitude<\/th>\n      <th>Family<\/th>\n      <th>Urban.Rural<\/th>\n      <th>Sample.Size<\/th>\n      <th>Test.date<\/th>\n      <th>Method.s.<\/th>\n      <th>Source<\/th>\n      <th>Loci.typed<\/th>\n      <th>Additional.notes<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"scrollX":true,"columnDefs":[{"className":"dt-right","targets":1},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
 <p><strong>Example 4:</strong> Query the metainformation concerning the populations that were listed in the table returned by Example 1</p>
 <pre class="r"><code>sel4 &lt;- query_population_detail(as.numeric(sel1$population_id))
 
-DT::datatable(sel4, options = list(scrollX = TRUE))</code></pre>
-<div id="htmlwidget-ab698812d8163be38e08" style="width:100%;height:auto;" class="datatables html-widget"></div>
-<script type="application/json" data-for="htmlwidget-ab698812d8163be38e08">{"x":{"filter":"none","data":[["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"],[3089,3390,3382,3379,3378,3375,3374,3136,2850,3202,3201,3207,3208,3209,3217,3210,3211,3212,3218,3214,3216,3215,3206,3223,3222,3220],["Caucasoid","","","","","Jew","","Oriental","Caucasoid","Black","Black","Black","Hispanic","Amerindian","Oriental","Caucasoid","Austronesian","Polynesian","Hispanic","Oriental","Hispanic","Arab","Amerindian","Asian","Oriental","Oriental"],["Europe","Western Asia","Western Asia","Western Asia","Western Asia","Western Asia","Western Asia","North-East Asia","Europe","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America"],["48º 24' N","32º 8' N","32º 10' N","32º 10' N","32º 10' N","32º 9' N","32º 9' N","35º 41' N","","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","30º 45' N","30º 45' N","38º 45' N"],["9º 58' E","34º 86' E","34º 86' E","34º 86' E","34º 86' E","34º 84' E","34º 84' E","139º 46' E","","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W"],["Not Known","Grandparents live at same location","Not Known","Not Known","Not Known","Not Known","Not Known","Grandparents live at same location","Grandparents live at same location","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known","Not Known"],["Urban and Rural","Urban and Rural","Urban and Rural","Urban and Rural","Urban and Rural","Urban and Rural","Urban and Rural","Urban and Rural","Urban and Rural","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown","Unknown"],["39689 (A = 39654, B = 39496, DRB1 = 33683)","12301","13270","36718","13871","45681","15542","18604","20653","28557 (C = 6975, DQB1 = 1488)","416581 (C = 99946, DQB1 = 16178)","33328 (C = 10012, DQB1 = 1856)","115374 (C = 21286, DQB1 = 4420)","14339 (C = 5631, DQB1 = 937)","99672 (C = 16621, DQB1 = 3753)","1242890 (C = 395676, DQB1 = 81106)","50614 (C = 15272, DQB1 = 1919)","11499 (C = 3110, DQB1 = 505)","146714 (C = 31446, DQB1 = 5764)","77584 (C = 11656, DQB1 = 2107)","261235 (C = 50875, DQB1 = 12721)","70890 (C = 22337, DQB1 = 4415)","35791 (C = 7006, DQB1 = 2398)","185391 (C = 29635, DQB1 = 8409)","27978","43540 (C = 10511, DQB1 = 1032)"],["0","2014","2014","2014","2014","2014","2014","2013","2011","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013","2013"],["SBT","SSP, SSOP, SBT","SSP, SSOP, SBT","SSP, SSOP, SBT","SSP, SSOP, SBT","SSP, SSOP, SBT","SSP, SSOP, SBT","SSOP","Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing","SSP, SSOP, SBT, Sequencing"],["Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Anthropology Study","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry","Bone Marrow Registry"],["A, B, C, DRB1","A, B, DRB1","A, B, DRB1","A, B, DRB1","A, B, DRB1","A, B, DRB1","A, B, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DQB1, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DQB1, DRB1","A, B, C, DQB1, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DRB1","A, B, C, DQB1, DRB1"],["Number individuals typed at each locus: HLA-A:39654; HLA-B:39496; HLA-C:39689; HLA-DRB1: 33683","Data is from bone marrow donors registered in Ezer Mizion BMDR Israel who self-assigned their origin to specified country qethnic group. Haplotype frequencies were calculated from genotype list data using the expectation–maximization (EM) algorithm.","Data is from bone marrow donors registered in Ezer Mizion BMDR Israel who self-assigned their origin to specified countryqethnic group.Haplotype frequencies were calculated from genotype list data using the expectation–maximization (EM) algorithm. So","Data is from bone marrow donors registered in Ezer Mizion BMDR Israel who self-assigned their origin to specified countryqethnic group.Haplotype frequencies were calculated from genotype list data using the expectation–maximization (EM) algorithm. So","Data is from bone marrow donors registered in Ezer Mizion BMDR Israel who self-assigned their origin to specified countryqethnic group.Haplotype frequencies were calculated from genotype list data using the expectation–maximization (EM) algorithm. So","Data is from bone marrow donors registered in Ezer Mizion BMDR Israel who self-assigned their origin to specified countryqethnic group.Haplotype frequencies were calculated from genotype list data using the expectation–maximization (EM) algorithm. So","Data is from bone marrow donors registered in Ezer Mizion BMDR Israel who self-assigned their origin to specified countryqethnic group.Haplotype frequencies were calculated from genotype list data using the expectation–maximization (EM) algorithm. So","Direct count from family study.","","Sample sizes HLA-C=6975, HLA-DQB1=1488\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=99946, HLA-DQB1=16178\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=10012, HLA-DQB1=1856\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=21286, HLA-DQB1=4420\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=5631, HLA-DQB1=937\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=16621, HLA-DQB1=3753\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=395676, HLA-DQB1=81106\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=15272, HLA-DQB1=1919\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=3110, HLA-DQB1=505\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=31446, HLA-DQB1=5764\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=11656, HLA-DQB1=2107\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=50875, HLA-DQB1=12721\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=22337, HLA-DQB1=4415\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=7006, HLA-DQB1=2398\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=29635, HLA-DQB1=8409\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=5579, HLA-DQB1=1321\r\nOnly the 100 most frequent haplotypes were considerated","Sample sizes HLA-C=10511, HLA-DQB1=1032\r\nOnly the 100 most frequent haplotypes were considerated"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>population_id<\/th>\n      <th>Ethnic.origin<\/th>\n      <th>Geographic.Region<\/th>\n      <th>Latitude<\/th>\n      <th>Longitude<\/th>\n      <th>Family<\/th>\n      <th>Urban.Rural<\/th>\n      <th>Sample.Size<\/th>\n      <th>Test.date<\/th>\n      <th>Method.s.<\/th>\n      <th>Source<\/th>\n      <th>Loci.typed<\/th>\n      <th>Additional.notes<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"scrollX":true,"columnDefs":[{"className":"dt-right","targets":1},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+# only select the first 5 columns to discplay in table
+DT::datatable(sel4[1:5], options = list(scrollX = TRUE))</code></pre>
+<div id="htmlwidget-9e27c0290126ad4edc53" style="width:100%;height:auto;" class="datatables html-widget"></div>
+<script type="application/json" data-for="htmlwidget-9e27c0290126ad4edc53">{"x":{"filter":"none","data":[["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26"],[3089,3390,3382,3379,3378,3375,3374,3136,2850,3202,3201,3207,3208,3209,3217,3210,3211,3212,3218,3214,3216,3215,3206,3223,3222,3220],["Caucasoid","Arab","Jew","Jew","Jew","Jew","Jew","Oriental","Caucasoid","Black","Black","Black","Hispanic","Amerindian","Oriental","Caucasoid","Austronesian","Polynesian","Hispanic","Oriental","Hispanic","Arab","Amerindian","Asian","Oriental","Oriental"],["Europe","Western Asia","Western Asia","Western Asia","Western Asia","Western Asia","Western Asia","North-East Asia","Europe","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America","North America"],["48º 24' N","32º 8' N","32º 10' N","32º 10' N","32º 10' N","32º 9' N","32º 9' N","35º 41' N","52º 8' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N","38º 45' N"],["9º 58' E","34º 52' E","34º 52' E","34º 52' E","34º 52' E","34º 50' E","34º 50' E","139º 46' E","19º 23' E","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W","76º 6' W"]],"container":"<table class=\"display\">\n  <thead>\n    <tr>\n      <th> <\/th>\n      <th>population_id<\/th>\n      <th>Ethnic.origin<\/th>\n      <th>Geographic.Region<\/th>\n      <th>Latitude<\/th>\n      <th>Longitude<\/th>\n    <\/tr>\n  <\/thead>\n<\/table>","options":{"scrollX":true,"columnDefs":[{"className":"dt-right","targets":1},{"orderable":false,"targets":0}],"order":[],"autoWidth":false,"orderClasses":false}},"evals":[],"jsHooks":[]}</script>
+</div>
+<div id="references" class="section level2">
+<h2>References</h2>
+<ol style="list-style-type: decimal">
+<li>Gonzalez-Galarza FF, McCabe A, Santos EJ, Jones J, Takeshita LY, Ortega-Rivera ND, Del Cid-Pavon GM, Ramsbottom K, Ghattaoraya GS, Alfirevic A, Middleton D and Jones AR. Allele frequency net database (AFND) 2020 update: gold-standard data classification, open access genotype data and new query tools. Nucleic Acid Research 2020, 48, D783-8.</li>
+</ol>
 </div>
 
 
@@ -2921,7 +3046,7 @@ DT::datatable(sel4, options = list(scrollX = TRUE))</code></pre>
 
 // add bootstrap table styles to pandoc tables
 function bootstrapStylePandocTables() {
-  $('tr.header').parent('thead').parent('table').addClass('table table-condensed');
+  $('tr.odd').parent('tbody').parent('table').addClass('table table-condensed');
 }
 $(document).ready(function () {
   bootstrapStylePandocTables();

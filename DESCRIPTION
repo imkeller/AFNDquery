@@ -12,5 +12,5 @@ Depends: R (>= 3.6)
 Imports: rvest, stringr
 Suggests: knitr, testthat
 VignetteBuilder: knitr
-RoxygenNote: 7.1.0
+RoxygenNote: 7.1.1
 biocViews: Software
