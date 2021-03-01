@@ -4,7 +4,7 @@
 
 ### Hyperpolymorphic HLA genes in human populations
 
-MHC (major histocompatibility complex) molecules are cell surface complexes that present peptide antigens to T cells. This processed, also known as MHC-dependent antigen presentation, is essential for the coordination of adaptive immune responses. In humans, MHC molecules are encoded by highly variable HLA (human leukocyte antigen) genes encoded in the hyperpolymorphic HLA locus on chromosome 6. The library of peptide antigens presented on MHC molecule highly depends on the HLA alleles genes present in an individual. The frequencies of individual HLA alleles varies substantially between worldwide human populations.
+MHC (major histocompatibility complex) molecules are cell surface complexes that present peptide antigens to T cells. This processed, also known as MHC-dependent antigen presentation, is essential for the coordination of adaptive immune responses. In humans, MHC molecules are encoded by highly variable HLA (human leukocyte antigen) genes encoded in the hyperpolymorphic HLA locus on chromosome 6. The library of peptide antigens presented on MHC molecules highly depends on the HLA alleles genes present in an individual. The frequencies of individual HLA alleles varies substantially between worldwide human populations.
 
 ### Databases for HLA allele frequencies in human populations
 
